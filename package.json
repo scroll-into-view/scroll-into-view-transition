@@ -40,7 +40,7 @@
   "devEngines": {
     "packageManager": {
       "name": "npm",
-      "version": "10.9.10",
+      "version": "11.21.2",
       "onFail": "download"
     }
   }
