@@ -1,2 +1,5 @@
+lockfile:
+  format: v13
+
 overrides:
   vite: "npm:@voidzero-dev/vite-plus-core@1.6.0"
