@@ -117,8 +117,10 @@ A custom `behavior` function is returned as-is, like
 `scroll-into-view-if-needed`.
 
 Pass an [`AbortSignal`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal)
-as `signal` to cancel. If the signal aborts before or during the transition, the
-Promise rejects with the signal's abort reason. A transition skipped because a
+as `signal` to cancel. If the signal is already aborted, nothing scrolls. If it
+aborts during the transition, the animation is skipped and the page jumps to
+the destination. Either way, the Promise rejects with the signal's abort
+reason. A transition skipped because a
 newer view transition started still resolves: the scroll update already ran.
 
 ```js

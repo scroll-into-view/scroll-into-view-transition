@@ -311,7 +311,6 @@ describe('scroll-into-view-transition in the browser', () => {
     await expect(done).rejects.toSatisfy(
       (error: unknown) => (error as Error).name === 'AbortError',
     )
-    await new Promise((resolve) => requestAnimationFrame(resolve))
     expectApprox(window.scrollY, target.offsetTop, 2, 'window.scrollY')
   })
 

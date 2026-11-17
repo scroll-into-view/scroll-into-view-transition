@@ -66,8 +66,9 @@ export interface BaseOptions extends ComputeOptions {
    */
   beforeScroll?: (actions: ScrollAction[]) => ScrollAction[]
   /**
-   * Stops the view transition when aborted, and rejects the returned Promise
-   * with the signal's abort reason.
+   * Skips the view transition when aborted, jumping to the destination, and
+   * rejects the returned Promise with the signal's abort reason once the
+   * scroll has landed.
    */
   signal?: AbortSignal
 }
@@ -229,7 +230,9 @@ const scrollSmoothly = async (
   return actions
 }
 
-const runStandardScroll = (
+// Async so an aborted `signal` rejects instead of throwing. When it aborts
+// mid-transition, the Promise rejects once the scroll has landed
+const runStandardScroll = async (
   target: Element,
   options: StandardBehaviorOptions,
 ): Promise<ScrollAction[]> => {
@@ -242,7 +245,7 @@ const runStandardScroll = (
 
   if (options.behavior === 'auto' || options.behavior === 'instant') {
     applyScroll(actions)
-    return Promise.resolve(actions)
+    return actions
   }
 
   return scrollSmoothly(actions, options)
@@ -287,28 +290,6 @@ function scrollIntoView<T = unknown>(
   }
 
   const standardOptions = getOptions(options)
-  const { signal } = standardOptions
-  if (signal) {
-    return new Promise<ScrollAction[]>((resolve, reject) => {
-      const onAbort = () => reject(abortReason(signal))
-      if (signal.aborted) {
-        onAbort()
-        return
-      }
-      signal.addEventListener('abort', onAbort)
-      runStandardScroll(target, standardOptions).then(
-        (actions) => {
-          signal.removeEventListener('abort', onAbort)
-          resolve(actions)
-        },
-        (error: unknown) => {
-          signal.removeEventListener('abort', onAbort)
-          reject(error)
-        },
-      )
-    })
-  }
-
   return runStandardScroll(target, standardOptions)
 }
 
