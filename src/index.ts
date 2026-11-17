@@ -10,6 +10,13 @@ import {
   skipOverflowHiddenElements as skipOverflowHidden,
 } from 'compute-scroll-into-view/middleware'
 
+import {
+  applyScroll,
+  prefersReducedMotion,
+  scrollWithViewTransition,
+  supportsViewTransitions,
+} from './view-transition.ts'
+
 /** @public */
 export type { Middleware, ScrollAction }
 
@@ -72,22 +79,21 @@ export interface BaseOptions extends ComputeOptions {
 export interface StandardBehaviorOptions extends BaseOptions {
   /**
    * `'smooth'` (the default) animates with the View Transitions API when
-   * available. `'auto'` jumps instantly.
+   * available. `'auto'` and `'instant'` jump instantly.
    * @default 'smooth'
    */
   behavior?: ScrollBehavior
   /**
    * How long the view-transition scroll animation runs, in milliseconds.
-   * Defaults to `400`: long enough to read as motion, shorter than a typical
-   * rAF smooth-scroll loop so the browser-driven transition stays snappy.
-   * Unused when the library falls back to an instant scroll.
+   * `0` jumps instantly. Unused when the library falls back to an instant
+   * scroll.
    * @default 400
    */
   duration?: number
   /**
-   * CSS easing for the view-transition scroll animation. Defaults to an
-   * ease-out quint curve (`cubic-bezier(0.22, 1, 0.36, 1)`), matching the feel
-   * of `smooth-scroll-into-view-if-needed`'s default `ease` function.
+   * CSS `animation-timing-function` for the view-transition scroll animation.
+   * Values the browser doesn't support fall back to the default ease-out
+   * curve.
    * @default 'cubic-bezier(0.22, 1, 0.36, 1)'
    */
   easing?: string
@@ -180,34 +186,12 @@ const isInDocument = (element: Node) => {
   return false
 }
 
-const applyScroll = (actions: ScrollAction[]) => {
-  for (const { el, top, left } of actions) {
-    // Prefer property assignment over `scroll({ behavior: 'instant' })` so
-    // Baseline 2019 browsers and older engine builds still jump immediately.
-    el.scrollTop = top
-    el.scrollLeft = left
-  }
-}
-
-const prefersReducedMotion = (): boolean => {
+const isValidEasing = (easing: string): boolean => {
   try {
-    return matchMedia('(prefers-reduced-motion: reduce)').matches
+    return CSS.supports('animation-timing-function', easing)
   } catch {
     return false
   }
-}
-
-const supportsViewTransitions = (): boolean =>
-  typeof document !== 'undefined' &&
-  typeof document.startViewTransition === 'function'
-
-const isRootScroller = (el: Element): boolean => {
-  const scrollingElement = document.scrollingElement
-  return (
-    el === document.documentElement ||
-    el === document.body ||
-    (scrollingElement !== null && el === scrollingElement)
-  )
 }
 
 // `AbortSignal.reason` is newer than `AbortSignal` itself
@@ -217,251 +201,31 @@ const abortReason = (signal: AbortSignal): unknown =>
     : Object.assign(new Error('The scroll was aborted'), { name: 'AbortError' })
 
 const throwIfAborted = (signal: AbortSignal | undefined) => {
-  if (signal?.aborted) {
+  if (signal && signal.aborted) {
     throw abortReason(signal)
   }
 }
 
-type NamedScroller = {
-  el: Element
-  name: string
-  previous: string
-}
-
-type ScrollDelta = {
-  el: Element
-  top: number
-  left: number
-  dx: number
-  dy: number
-  isRoot: boolean
-  name: string
-}
-
-let nameCounter = 0
-
-const nextTransitionName = (): string => {
-  nameCounter += 1
-  return `scroll-into-view-transition-${nameCounter}`
-}
-
-const setViewTransitionName = (el: Element, name: string): NamedScroller => {
-  const style = (el as HTMLElement).style
-  const previous = style.viewTransitionName
-  style.viewTransitionName = name
-  return { el, name, previous }
-}
-
-const restoreViewTransitionNames = (named: NamedScroller[]) => {
-  for (const item of named) {
-    ;(item.el as HTMLElement).style.viewTransitionName = item.previous
-  }
-}
-
-const buildTransitionStyle = (names: string[]): HTMLStyleElement => {
-  const style = document.createElement('style')
-  const selectors: string[] = [
-    '::view-transition-old(root)',
-    '::view-transition-new(root)',
-  ]
-  const groupSelectors: string[] = ['::view-transition-group(root)']
-  for (const name of names) {
-    selectors.push(`::view-transition-old(${name})`)
-    selectors.push(`::view-transition-new(${name})`)
-    groupSelectors.push(`::view-transition-group(${name})`)
-  }
-  // Disable the default cross-fade, keep snapshots opaque, and clip nested
-  // scroll-container groups so translating their old/new snapshots reads as a
-  // scroll instead of sliding the whole box around the page.
-  style.textContent = `${groupSelectors.join(',')}{overflow:clip;}
-${selectors.join(',')}{animation:none;mix-blend-mode:normal;display:block;height:100%;width:100%;object-fit:none;object-position:left top;}`
-  document.head.append(style)
-  return style
-}
-
-const cancelViewTransitionAnimations = () => {
-  for (const animation of document.getAnimations()) {
-    const effect = animation.effect
-    if (!(effect instanceof KeyframeEffect)) {
-      continue
-    }
-    const pseudo = effect.pseudoElement
-    if (pseudo && pseudo.startsWith('::view-transition')) {
-      animation.cancel()
-    }
-  }
-}
-
-const animateScrollSnapshots = (
-  deltas: ScrollDelta[],
-  duration: number,
-  easing: string,
-) => {
-  cancelViewTransitionAnimations()
-
-  let rootAnimated = false
-  for (const delta of deltas) {
-    if (delta.name === 'root') {
-      rootAnimated = true
-    }
-    const dx = delta.dx
-    const dy = delta.dy
-    // Scrolling down/right moves content up/left, so the old snapshot ends at
-    // `-delta` and the new one starts at `+delta`.
-    document.documentElement.animate(
-      [
-        { transform: 'translate(0px, 0px)', opacity: 1 },
-        {
-          transform: `translate(${-dx}px, ${-dy}px)`,
-          opacity: 1,
-        },
-      ],
-      {
-        duration,
-        easing,
-        fill: 'both',
-        pseudoElement: `::view-transition-old(${delta.name})`,
-      },
-    )
-    document.documentElement.animate(
-      [
-        {
-          transform: `translate(${dx}px, ${dy}px)`,
-          opacity: 1,
-        },
-        { transform: 'translate(0px, 0px)', opacity: 1 },
-      ],
-      {
-        duration,
-        easing,
-        fill: 'both',
-        pseudoElement: `::view-transition-new(${delta.name})`,
-      },
-    )
-  }
-
-  // Nested-only scrolls still produce a root image pair. Keep the new root
-  // visible and hide the old one so they don't stack on top of the scroller.
-  if (!rootAnimated) {
-    document.documentElement.animate([{ opacity: 0 }, { opacity: 0 }], {
-      duration,
-      fill: 'both',
-      pseudoElement: '::view-transition-old(root)',
-    })
-    document.documentElement.animate([{ opacity: 1 }, { opacity: 1 }], {
-      duration,
-      fill: 'both',
-      pseudoElement: '::view-transition-new(root)',
-    })
-  }
-}
-
-const planDeltas = (actions: ScrollAction[]): ScrollDelta[] => {
-  const deltas: ScrollDelta[] = []
-  for (const action of actions) {
-    const dx = action.left - action.el.scrollLeft
-    const dy = action.top - action.el.scrollTop
-    if (dx === 0 && dy === 0) {
-      continue
-    }
-    const isRoot = isRootScroller(action.el)
-    deltas.push({
-      el: action.el,
-      top: action.top,
-      left: action.left,
-      dx,
-      dy,
-      isRoot,
-      name: isRoot ? 'root' : nextTransitionName(),
-    })
-  }
-  return deltas
-}
-
-const scrollWithViewTransition = async (
+const scrollSmoothly = async (
   actions: ScrollAction[],
   options: StandardBehaviorOptions,
 ): Promise<ScrollAction[]> => {
-  const duration = options.duration ?? DEFAULT_DURATION
-  const easing = options.easing ?? DEFAULT_EASING
-  const signal = options.signal
-
-  throwIfAborted(signal)
-
-  const deltas = planDeltas(actions)
-  if (deltas.length === 0) {
-    return actions
-  }
-
-  // Nothing interesting to animate: jump and resolve.
-  if (!supportsViewTransitions() || prefersReducedMotion() || duration <= 0) {
+  const duration =
+    options.duration === undefined ? DEFAULT_DURATION : options.duration
+  if (!supportsViewTransitions() || prefersReducedMotion() || !(duration > 0)) {
     applyScroll(actions)
     return actions
   }
-
-  const named: NamedScroller[] = []
-  const customNames: string[] = []
-  for (const delta of deltas) {
-    if (!delta.isRoot) {
-      named.push(setViewTransitionName(delta.el, delta.name))
-      customNames.push(delta.name)
-    }
-  }
-
-  const style = buildTransitionStyle(customNames)
-  let transition: ViewTransition
-  try {
-    throwIfAborted(signal)
-    transition = document.startViewTransition(() => {
-      applyScroll(actions)
-    })
-  } catch (error) {
-    style.remove()
-    restoreViewTransitionNames(named)
-    // If starting the transition fails, still land on the destination.
-    applyScroll(actions)
-    throw error
-  }
-
-  const cleanup = () => {
-    style.remove()
-    restoreViewTransitionNames(named)
-  }
-
-  if (signal) {
-    const onAbort = () => {
-      transition.skipTransition()
-    }
-    if (signal.aborted) {
-      onAbort()
-    } else {
-      signal.addEventListener('abort', onAbort, { once: true })
-      void transition.finished.finally(() => {
-        signal.removeEventListener('abort', onAbort)
-      })
-    }
-  }
-
-  try {
-    await transition.ready
-    throwIfAborted(signal)
-    animateScrollSnapshots(deltas, duration, easing)
-    await transition.finished
-  } catch {
-    // A skipped or interrupted transition still applied the scroll in the
-    // update callback (`finished` rejects on `skipTransition()`, including
-    // when a newer view transition replaces this one). Resolve unless the
-    // caller aborted via `signal`.
-    if (signal?.aborted) {
-      throw abortReason(signal)
-    }
-  } finally {
-    cleanup()
-  }
-
-  throwIfAborted(signal)
-  // Guaranteed destination even if the update callback never ran (defensive).
-  applyScroll(actions)
+  const easing =
+    options.easing !== undefined && isValidEasing(options.easing)
+      ? options.easing
+      : DEFAULT_EASING
+  await scrollWithViewTransition(actions, {
+    duration,
+    easing,
+    signal: options.signal,
+  })
+  throwIfAborted(options.signal)
   return actions
 }
 
@@ -476,13 +240,12 @@ const runStandardScroll = (
     ? options.beforeScroll(computed)
     : computed
 
-  if (options.behavior === 'auto') {
+  if (options.behavior === 'auto' || options.behavior === 'instant') {
     applyScroll(actions)
     return Promise.resolve(actions)
   }
 
-  // Default behavior is smooth (view transition when possible)
-  return scrollWithViewTransition(actions, options)
+  return scrollSmoothly(actions, options)
 }
 
 /**
