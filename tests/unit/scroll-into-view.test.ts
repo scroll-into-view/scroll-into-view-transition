@@ -252,6 +252,26 @@ describe('scrolling', () => {
     expect(elements[1]?.scrollLeft).toBe(40)
   })
 
+  test('behavior: instant scrolls without a view transition', async () => {
+    const { elements } = mockActions()
+    const startViewTransition = vi.fn<() => never>()
+    Object.defineProperty(document, 'startViewTransition', {
+      configurable: true,
+      writable: true,
+      value: startViewTransition,
+    })
+
+    try {
+      await scrollIntoView(createTarget(), { behavior: 'instant' })
+    } finally {
+      Reflect.deleteProperty(document, 'startViewTransition')
+    }
+
+    expect(startViewTransition).not.toHaveBeenCalled()
+    expect(elements[0]?.scrollTop).toBe(10)
+    expect(elements[1]?.scrollTop).toBe(30)
+  })
+
   test('beforeScroll can rewrite actions', async () => {
     const { elements } = mockActions()
 
