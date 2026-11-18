@@ -90,6 +90,30 @@ describe('targets that are not in the document', () => {
     expect(computeMock).not.toHaveBeenCalled()
   })
 
+  test('scrolls a connected target when isConnected is missing, as in Edge 18', async () => {
+    const target = createTarget()
+    Object.defineProperty(target, 'isConnected', {
+      configurable: true,
+      get: () => undefined,
+    })
+
+    await scrollIntoView(target, { behavior: 'auto' })
+
+    expect(target.isConnected).toBeUndefined()
+    expect(computeMock).toHaveBeenCalledOnce()
+  })
+
+  test('still no-ops a detached target when isConnected is missing', async () => {
+    const target = document.createElement('div')
+    Object.defineProperty(target, 'isConnected', {
+      configurable: true,
+      get: () => undefined,
+    })
+
+    await expect(scrollIntoView(target)).resolves.toEqual([])
+    expect(computeMock).not.toHaveBeenCalled()
+  })
+
   test('scrolls targets inside a shadow root', async () => {
     const host = createTarget()
     const target = document.createElement('div')

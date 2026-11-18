@@ -187,6 +187,12 @@ const isInDocument = (element: Node) => {
   return false
 }
 
+// `Node.isConnected` arrived in Edge 79, so Edge 18 (Baseline 2019) doesn't
+// have it. `!undefined` would treat every target as detached, so the property
+// only counts when it exists. `isInDocument` decides the rest.
+const isDetached = (node: Node): boolean =>
+  typeof node.isConnected === 'boolean' && !node.isConnected
+
 const isValidEasing = (easing: string): boolean => {
   try {
     return CSS.supports('animation-timing-function', easing)
@@ -278,7 +284,7 @@ function scrollIntoView<T = unknown>(
   options?: StandardBehaviorOptions | CustomBehaviorOptions<T> | boolean,
 ): T | Promise<ScrollAction[]> {
   // Browsers treat targets that aren't in the dom as a no-op and so should we
-  if (!target.isConnected || !isInDocument(target)) {
+  if (isDetached(target) || !isInDocument(target)) {
     if (isCustomScrollBehavior<T>(options)) {
       return options.behavior([])
     }
