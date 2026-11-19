@@ -1,6 +1,6 @@
 {
   "name": "scroll-into-view-transition",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Smoothly scroll elements into view using the CSS View Transitions API",
   "keywords": [
     "behavior-smooth",
