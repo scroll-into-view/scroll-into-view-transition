@@ -5,4 +5,4 @@ minimumReleaseAgeExclude:
   - compute-scroll-into-view@4.0.0
 
 overrides:
-  vite: 'npm:@voidzero-dev/vite-plus-core@1.6.0'
+  vite: 'npm:@voidzero-dev/vite-plus-core@8.3.8001'
